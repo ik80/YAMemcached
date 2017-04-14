@@ -67,6 +67,12 @@ void sig_handler(int signo)
     }
 }
 
+void printVersion() 
+{
+    // version will be printed here
+    exit(0);
+}
+
 // TODO: 1) UDP memcached protocol - debug
 // TODO: 2) save/load
 // TODO: 3) stats
@@ -95,7 +101,7 @@ int main(int argc, char * argv[])
     char* loadFileName = 0;
 
     char c;
-    while((c = getopt(argc, argv, "ut:s:p:l:")) != EOF)
+    while((c = getopt(argc, argv, "ut:s:p:l:v")) != EOF)
     {
         switch (c)
         {
@@ -118,6 +124,13 @@ int main(int argc, char * argv[])
             break;
             case 'l':
             loadFileName = optarg;
+            break;
+            case 'v':
+            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>));
+            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRULinks) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRULinks));
+            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRUElement) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRUElement));
+            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::ThreadLRUList) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::ThreadLRUList));
+            printVersion();
             break;
             default:
             return 1;

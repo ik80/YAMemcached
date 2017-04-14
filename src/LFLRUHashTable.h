@@ -18,6 +18,7 @@ class LFLRUHashTable
 {
     template<typename KK, typename VV, class HH>
     friend class LFLRUHashTableUtil;
+    friend int main(int argc, char * argv[]);
 
 public:
 
@@ -74,8 +75,8 @@ private:
         unsigned int reserved; //4
         unsigned long long moves; //8
         unsigned long long inserts; //8
-        unsigned int locks[HASH_MAX_LOCK_DEPTH]; // four cachelines
-    }__attribute((aligned(64)));
+        unsigned int locks[HASH_MAX_LOCK_DEPTH]; 
+    }__attribute((aligned(64))); // 16 cachelines
 
     static_assert(sizeof(std::atomic_uint) == sizeof(unsigned int), "sizeof(std::atomic_uint) != sizeof(unsigned int)");
 
