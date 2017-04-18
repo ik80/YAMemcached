@@ -126,10 +126,13 @@ int main(int argc, char * argv[])
             loadFileName = optarg;
             break;
             case 'v':
-            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>));
-            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRULinks) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRULinks));
-            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRUElement) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRUElement));
-            printf("sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::ThreadLRUList) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::ThreadLRUList));
+            printf("sizeofs:\n");
+            printf("LFLRUHashTable == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>));
+            printf("LFLRUHashTable::LRULinks) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRULinks));
+            printf("sso23::string == %lu\n", sizeof(sso23::string));
+            printf("StorageValue == %lu\n", sizeof(YAMemcachedServer::StorageValue));
+            printf("LFLRUHashTable::LRUElement == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::LRUElement));
+            printf("LFLRUHashTable::ThreadLRUList) == %lu\n", sizeof(LFLRUHashTable<sso23::string, YAMemcachedServer::StorageValue, YAMemcachedServer::string_hash>::ThreadLRUList));
             printVersion();
             break;
             default:
