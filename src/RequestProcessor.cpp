@@ -79,7 +79,7 @@ namespace YAMemcachedServer
                                 sValue.value = sso23::string(requestInfo.pDataBuffer, requestInfo.dataLen);
                                 sValue.casTicket = requestInfo.casTicket;
                                 sValue.flags = requestInfo.flags;
-                                globalServer()->pHash->insertOrSet(threadId, key, sValue);
+                                globalServer()->pHash->insertOrSet(threadId, key, sValue, requestInfo.expTime);
                                 if((requestInfo.requestFlags & NOREPLY) == 0)
                                 {
                                     const char reply[] = "STORED\r\n";
@@ -99,7 +99,7 @@ namespace YAMemcachedServer
                                 sValue.value = sso23::string(requestInfo.pDataBuffer, requestInfo.dataLen);
                                 sValue.casTicket = requestInfo.casTicket;
                                 sValue.flags = requestInfo.flags;
-                                bool inserted = globalServer()->pHash->insert(threadId, key, sValue);
+                                bool inserted = globalServer()->pHash->insert(threadId, key, sValue, requestInfo.expTime);
                                 if((requestInfo.requestFlags & NOREPLY) == 0)
                                 {
                                     const char replyStored[] = "STORED\r\n";
@@ -128,7 +128,7 @@ namespace YAMemcachedServer
                                 sValue.value = sso23::string(requestInfo.pDataBuffer, requestInfo.dataLen);
                                 sValue.casTicket = requestInfo.casTicket;
                                 sValue.flags = requestInfo.flags;
-                                bool setResult = globalServer()->pHash->set(threadId, key, sValue);
+                                bool setResult = globalServer()->pHash->set(threadId, key, sValue, requestInfo.expTime);
                                 if((requestInfo.requestFlags & NOREPLY) == 0)
                                 {
                                     const char replyStored[] = "STORED\r\n";
@@ -174,7 +174,7 @@ namespace YAMemcachedServer
                                     if(sValue.casTicket == replacedValue.casTicket)
                                     {
                                         ++sValue.casTicket;
-                                        globalServer()->pHash->set(threadId, key, sValue, casLocks, locksStart, locksEnd);
+                                        globalServer()->pHash->set(threadId, key, sValue, requestInfo.expTime, casLocks, locksStart, locksEnd);
                                         if((requestInfo.requestFlags & NOREPLY) == 0)
                                         {
                                             const char replyStored[] = "STORED\r\n";

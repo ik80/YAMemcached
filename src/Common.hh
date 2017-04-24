@@ -20,6 +20,7 @@
 #include "xxhash.h"
 #include "string.hpp"
 #include "FastSubstringMatcher.h"
+#include "trbtree.hh"
 
 namespace YAMemcachedServer
 {
@@ -54,6 +55,7 @@ namespace YAMemcachedServer
     } __attribute((aligned(1),packed));
 
     using LFStringMap = LFLRUHashTable<sso23::string, StorageValue, string_hash >;
+    using ExpTimeMap = TRBTree<unsigned int, uint32_t>;
 
     struct SLFSPHTItemCounter
     {

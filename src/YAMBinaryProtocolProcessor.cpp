@@ -123,7 +123,7 @@ namespace YAMemcachedServer
                     sValue.flags = *((uint32_t*)(&(inBuffer[inBufferOffset + HEADER_SIZE])));
                     sValue.casTicket = *((uint32_t*)(&(inBuffer[inBufferOffset + CAS_OFFSET])));
                     sValue.value = sso23::string((char*)pHeader+HEADER_SIZE + pHeader->extrasLen + pHeader->keyLen, pHeader->bodyLen - pHeader->extrasLen + pHeader->keyLen);
-                    globalServer()->pHash->insertOrSet(threadId, key, sValue);
+                    globalServer()->pHash->insertOrSet(threadId, key, sValue, requestInfo.expTime);
                     if(pHeader->opCode == YAMBinaryOpcodes::SET)
                     {
                         responseHeader.status = YAMBinaryStatus::NO_ERROR;
@@ -147,7 +147,7 @@ namespace YAMemcachedServer
                     sValue.flags = *((uint32_t*)(&(inBuffer[inBufferOffset + HEADER_SIZE])));
                     sValue.casTicket = *((uint32_t*)(&(inBuffer[inBufferOffset + CAS_OFFSET])));
                     sValue.value = sso23::string((char*)pHeader+HEADER_SIZE + pHeader->extrasLen + pHeader->keyLen, pHeader->bodyLen - pHeader->extrasLen + pHeader->keyLen);
-                    bool inserted = globalServer()->pHash->insert(threadId, key, sValue);
+                    bool inserted = globalServer()->pHash->insert(threadId, key, sValue, requestInfo.expTime);
                     if (inserted)
                     {
                         if (pHeader->opCode == YAMBinaryOpcodes::ADD)
@@ -186,7 +186,7 @@ namespace YAMemcachedServer
                         sValue.flags = *((uint32_t*)(&(inBuffer[inBufferOffset + HEADER_SIZE])));
                         sValue.casTicket = *((uint32_t*)(&(inBuffer[inBufferOffset + CAS_OFFSET])));
                         sValue.value = sso23::string((char*)pHeader+HEADER_SIZE + pHeader->extrasLen + pHeader->keyLen, pHeader->bodyLen - pHeader->extrasLen + pHeader->keyLen);
-                        bool overwritten = globalServer()->pHash->set(threadId, key, sValue);
+                        bool overwritten = globalServer()->pHash->set(threadId, key, sValue, requestInfo.expTime);
                         if (overwritten)
                         {
                             if(pHeader->opCode == YAMBinaryOpcodes::REPLACE)
@@ -229,7 +229,7 @@ namespace YAMemcachedServer
                             if (oldValue.casTicket == sValue.casTicket)
                             {
                                 sValue.casTicket += 1;
-                                globalServer()->pHash->set(threadId, key, sValue, locks, locksStart, locksEnd);
+                                globalServer()->pHash->set(threadId, key, sValue, requestInfo.expTime, locks, locksStart, locksEnd);
                                 if(pHeader->opCode == YAMBinaryOpcodes::REPLACE)
                                 {
                                     responseHeader.status = YAMBinaryStatus::NO_ERROR;

@@ -76,7 +76,7 @@ private:
         unsigned int freeListSize; //4
         unsigned long long moves; //8
         unsigned long long inserts; //8
-        std::map <uint32_t, unsigned int> * expTimeMap;
+        std::multimap <uint32_t, K> * expTimeMap;
         unsigned int locks[HASH_MAX_LOCK_DEPTH]; 
     }__attribute((aligned(64))); // 16 cachelines
 
@@ -100,13 +100,11 @@ private:
     inline unsigned int tryLockElementHash(unsigned long long pos);
     inline void unlockElementHash(unsigned long long pos, unsigned int idx);
     inline void unlockElementsHash(const unsigned long long begin, const unsigned long long end, unsigned int * indexes);
-    inline void removeFromHashPos(unsigned long long threadIdx, unsigned long long storagePos);
+    inline bool removeFromHashPos(unsigned long long threadIdx, unsigned long long storagePos);
     inline bool removeFromHashKey(unsigned long long threadIdx, const K & inKey, unsigned int& pos);
-    inline void addItemExpTime(unsigned long long threadIdx, unsigned int elementIdx, uint32_t expTime);
-    inline void changeItemExpTime(unsigned long long threadIdx, unsigned int elementIdx, uint32_t expTime);
-    // TODO: read element links. if its in freelist - or in the head/tail of another threads LRUList return false. otherwise lock it and check expTime, if its a mach - fill outKey, unlock and return true, based on return call remove
-    inline bool expireElement(unsigned long long threadIdx, unsigned int elementIdx, uint32_t expTime); 
-
+    inline bool removeFromHashIdx(unsigned long long threadIdx, unsigned long long elementIdx);
+    inline void addItemExpTime(unsigned long long threadIdx, const K& inKey, uint32_t expTime);
+    inline void removeItemsExpTime(unsigned long long threadIdx, uint32_t expTime);
 
 public:
     LFLRUHashTable(unsigned long long inNumElements, unsigned long long inHashSize, unsigned long long inNumThreads, const HashFunc & inHasher = HashFunc());
@@ -122,7 +120,7 @@ public:
     // Example: if (get(false) && (value==expected)) set ( true ); is equivalent to CAS
     inline bool insert(unsigned long long threadIdx, const K & inKey, const V & inValue, const uint32_t expTime /*, bool unlock = true*/);
     inline bool insertOrSet(unsigned long long threadIdx, const K & inKey, const V & inValue, const uint32_t expTime/*, bool unlock = true*/); // NOTE: true if inserted
-    inline bool get(unsigned long long threadIdx, const K & inKey, V & inValue, uint32_t & expTime, unsigned int * casLocks = 0, unsigned long long locksStart = 0,
+    inline bool get(unsigned long long threadIdx, const K & inKey, V & inValue, unsigned int * casLocks = 0, unsigned long long locksStart = 0,
                     unsigned long long locksEnd = 0); // casLocks must be unsigned int[HASH_MAX_LOCK_DEPTH]
     inline bool set(unsigned long long threadIdx, const K & inKey, const V & inValue, const uint32_t expTime, unsigned int * casLocks = 0, unsigned long long locksStart = 0,
                     unsigned long long locksEnd = 0); // casLocks must be unsigned int[HASH_MAX_LOCK_DEPTH]
@@ -311,8 +309,9 @@ unsigned int LFLRUHashTable<K, V, HashFunc>::unlinkTail(unsigned long long threa
     return oldTailIdx;
 }
 
+// LO AND BEHOLD: this isnt correct to call AL ALL, unless item is properly removed from the hash before or otherwise secured from concurrent access ( like being in the tail of some LRULIST )
 template<typename K, typename V, class HashFunc>
-void LFLRUHashTable<K, V, HashFunc>::removeFromHashPos(unsigned long long threadIdx, unsigned long long storagePos)
+bool LFLRUHashTable<K, V, HashFunc>::removeFromHashPos(unsigned long long threadIdx, unsigned long long storagePos)
 {
     // element hash idx
     unsigned long long idx = hasherFunc(elementStorage[storagePos].key) % hashSize;
@@ -325,7 +324,7 @@ void LFLRUHashTable<K, V, HashFunc>::removeFromHashPos(unsigned long long thread
     locks[lockDepth] = lockElementHash(idx);
 
     // first, find the matching record
-    while(true) // linear probing
+    while(locks[lockDepth] != HASH_FREE_MARK) // linear probing
     {
         if(elementStorage[locks[lockDepth]].key == elementStorage[storagePos].key)
         {
@@ -342,6 +341,13 @@ void LFLRUHashTable<K, V, HashFunc>::removeFromHashPos(unsigned long long thread
             ++lockDepth;
             locks[lockDepth] = lockElementHash(idx);
         }
+    }
+
+    // if element isnt found - unlock and return
+    if (lockDepthDeleted == HASH_MAX_LOCK_DEPTH)
+    {
+        unlockElementsHash(lockRangeStart, lockRangeEnd, locks);
+        return false;
     }
 
     // walk forward until next hole to see if any records need to be moved back
@@ -372,6 +378,7 @@ void LFLRUHashTable<K, V, HashFunc>::removeFromHashPos(unsigned long long thread
     if(lockDepthDeleted != HASH_MAX_LOCK_DEPTH)
         locks[lockDepthDeleted] = HASH_FREE_MARK;
     unlockElementsHash(lockRangeStart, lockRangeEnd, locks);
+    return true;
 }
 
 template<typename K, typename V, class HashFunc>
@@ -582,7 +589,7 @@ LFLRUHashTable<K, V, HashFunc>::LFLRUHashTable(unsigned long long inNumElements,
         links.right = LIST_END_MARK;
         if (links.left == (threadIdx + 1) * elementsPerThread - 1) abort();
         elementStorage[(threadIdx + 1) * elementsPerThread - 1].links.store(links, std::memory_order_seq_cst);
-        lruLists[threadIdx].expTimeMap = new std::map < uint32_t, unsigned int >();
+        lruLists[threadIdx].expTimeMap = new std::multimap < uint32_t, K >();
     }
     elementLinks = (std::atomic_uint*) std::malloc(hashSize * sizeof(std::atomic_uint));
     memset(elementLinks, 255 /*1/4 HASH_FREE_MARK*/, hashSize * sizeof(std::atomic_uint));
@@ -693,20 +700,21 @@ bool LFLRUHashTable<K, V, HashFunc>::insertOrSet(unsigned long long threadIdx, c
     if (lruLists[threadIdx].freeListHead == LIST_END_MARK)
     {
         elementToInsert = unlinkTail(threadIdx);
-        removeFromHashPos(threadIdx, elementToInsert);
+        if (!removeFromHashPos(threadIdx, elementToInsert))
+            abort();
         freeListHeadLinks = elementStorage[elementToInsert].links.load();
         freeListHeadLinks.left = LIST_END_MARK;
         freeListHeadLinks.right = lruLists[threadIdx].freeListHead;
         elementStorage[elementToInsert].links.store(freeListHeadLinks);
         lruLists[threadIdx].freeListHead = elementToInsert;
     }
-
+    addItemExpTime(threadIdx,inKey, expTime);
     return true;
 
 }
 
 template<typename K, typename V, class HashFunc>
-bool LFLRUHashTable<K, V, HashFunc>::get(unsigned long long threadIdx, const K & inKey, V & value, uint32_t & expTime, unsigned int * casLocks, unsigned long long locksStart,
+bool LFLRUHashTable<K, V, HashFunc>::get(unsigned long long threadIdx, const K & inKey, V & value, unsigned int * casLocks, unsigned long long locksStart,
                                          unsigned long long locksEnd)
 {
     unsigned long long idx = hasherFunc(inKey) % hashSize;
@@ -838,7 +846,7 @@ bool LFLRUHashTable<K, V, HashFunc>::insert(unsigned long long threadIdx, const 
         elementStorage[elementToInsert].links.store(freeListHeadLinks);
         lruLists[threadIdx].freeListHead = elementToInsert;
     }
-
+    addItemExpTime(threadIdx,inKey, expTime);
     return true;
 }
 
@@ -857,6 +865,7 @@ bool LFLRUHashTable<K, V, HashFunc>::set(unsigned long long threadIdx, const K &
             ++(lruLists[threadIdx].moves);
             linkHead(threadIdx, locks[lockDepth]);
         }
+        addItemExpTime(threadIdx,inKey, expTime);
         return true;
     }
     else
@@ -879,6 +888,7 @@ bool LFLRUHashTable<K, V, HashFunc>::set(unsigned long long threadIdx, const K &
                     ++(lruLists[threadIdx].moves);
                     linkHead(threadIdx, locks[lockDepth]);
                 }
+                addItemExpTime(threadIdx,inKey, expTime);
                 return true;
             }
             else
@@ -956,4 +966,28 @@ void LFLRUHashTable<K, V, HashFunc>::processHash(unsigned long long threadIdx, s
         elementLinks[pos].store(idx, std::memory_order_acq_rel);
     }
 }
+
+template<typename K, typename V, class HashFunc>
+void LFLRUHashTable<K, V, HashFunc>::addItemExpTime(unsigned long long threadIdx, const K& inKey, uint32_t expTime)
+{
+    lruLists[threadIdx].expTimeMap->emplace(expTime, inKey);
+}
+
+template<typename K, typename V, class HashFunc>
+void LFLRUHashTable<K, V, HashFunc>::removeItemsExpTime(unsigned long long threadIdx, uint32_t expTime)
+{
+    lruLists[threadIdx].expTimeMap->erase(expTime);
+}
+
+template<typename K, typename V, class HashFunc>
+void LFLRUHashTable<K, V, HashFunc>::removeExpiredItems(unsigned long long threadIdx, const uint32_t curTime)
+{
+    auto itExpiredEnd = lruLists[threadIdx].expTimeMap->upper_bound(curTime);
+    for (auto itExpiredElement = lruLists[threadIdx].expTimeMap->begin(); itExpiredElement != itExpiredEnd; ++itExpiredElement)
+    {
+        remove(threadIdx, itExpiredElement.second);
+    }
+}
+
+
 #endif /* LFLRUHASHTABLE_H_ */
