@@ -76,7 +76,8 @@ private:
         unsigned int freeListSize; //4
         unsigned long long moves; //8
         unsigned long long inserts; //8
-        std::multimap <uint32_t, K> * expTimeMap;
+        // TODO: expTime -> (pos, elementIdx) where pos is where in elementLinks to start linear probing for elementIdx.
+        std::multimap <uint32_t, std::pair<unsigned long long, unsigned uint> > * expTimeMap; 
         unsigned int locks[HASH_MAX_LOCK_DEPTH]; 
     }__attribute((aligned(64))); // 16 cachelines
 
@@ -102,8 +103,8 @@ private:
     inline void unlockElementsHash(const unsigned long long begin, const unsigned long long end, unsigned int * indexes);
     inline bool removeFromHashPos(unsigned long long threadIdx, unsigned long long storagePos);
     inline bool removeFromHashKey(unsigned long long threadIdx, const K & inKey, unsigned int& pos);
-    inline bool removeFromHashIdx(unsigned long long threadIdx, unsigned long long elementIdx);
-    inline void addItemExpTime(unsigned long long threadIdx, const K& inKey, uint32_t expTime);
+    inline bool removeFromHashIdx(unsigned long long threadIdx, const unsigned long long& inPos, const unsigned int& inElementIdx);
+    inline void addItemExpTime(unsigned long long threadIdx, const unsigned long long& inPos, const unsigned int& inElementIdx, uint32_t expTime);
     inline void removeItemsExpTime(unsigned long long threadIdx, uint32_t expTime);
 
 public:
@@ -456,6 +457,77 @@ bool LFLRUHashTable<K, V, HashFunc>::removeFromHashKey(unsigned long long thread
 }
 
 template<typename K, typename V, class HashFunc>
+bool LFLRUHashTable<K, V, HashFunc>::removeFromHashIdx(unsigned long long threadIdx, const unsigned long long& inPos, const unsigned int& inElementIdx)
+{
+    // element hash idx
+    unsigned long long idx = inPos;
+    unsigned long long lockRangeStart = idx;
+    unsigned long long lockRangeEnd = idx;
+    unsigned long long lockDepth = 0;
+    unsigned long long lockDepthDeleted = HASH_MAX_LOCK_DEPTH;
+    unsigned long long deletedIdx = 0;
+    unsigned int * locks = lruLists[threadIdx].locks;
+    locks[lockDepth] = lockElementHash(idx);
+
+    // first, find the matching record
+    while(locks[lockDepth] != HASH_FREE_MARK) // linear probing
+    {
+        if(locks[lockDepth] == inElementIdx)
+        {
+            deletedIdx = idx;
+            lockDepthDeleted = lockDepth;
+            break;
+        }
+        else
+        {
+            idx = (idx + 1) % hashSize;
+            lockRangeEnd = idx;
+            if (lockDepth >= HASH_MAX_LOCK_DEPTH)
+                abort();
+            ++lockDepth;
+            locks[lockDepth] = lockElementHash(idx);
+        }
+    }
+
+    // if element isnt found - unlock and return
+    if (lockDepthDeleted == HASH_MAX_LOCK_DEPTH)
+    {
+        unlockElementsHash(lockRangeStart, lockRangeEnd, locks);
+        return false;
+    }
+
+    // walk forward until next hole to see if any records need to be moved back
+    idx = (idx + 1) % hashSize;
+    lockRangeEnd = idx;
+    if (lockDepth >= HASH_MAX_LOCK_DEPTH)
+        abort();
+    ++lockDepth;
+    locks[lockDepth] = lockElementHash(idx);
+    while(locks[lockDepth] != HASH_FREE_MARK) // linear probing
+    {
+        // calc hash. If its less or equal new hole position, swap, save new hole and move on
+        unsigned long long nextHash = hasherFunc(elementStorage[locks[lockDepth]].key);
+        if(nextHash % hashSize <= deletedIdx)
+        {
+            // swap
+            locks[lockDepthDeleted] = locks[lockDepth];
+            lockDepthDeleted = lockDepth;
+            deletedIdx = idx;
+        }
+        idx = (idx + 1) % hashSize;
+        lockRangeEnd = idx;
+        if (lockDepth >= HASH_MAX_LOCK_DEPTH)
+            abort();
+        ++lockDepth;
+        locks[lockDepth] = lockElementHash(idx);
+    }
+    if(lockDepthDeleted != HASH_MAX_LOCK_DEPTH)
+        locks[lockDepthDeleted] = HASH_FREE_MARK;
+    unlockElementsHash(lockRangeStart, lockRangeEnd, locks);
+    return true;
+}
+
+template<typename K, typename V, class HashFunc>
 bool LFLRUHashTable<K, V, HashFunc>::linkHead(unsigned long long threadIdx, unsigned int elementIdx)
 {
     unsigned int oldHead = lruLists[threadIdx].head;
@@ -589,7 +661,7 @@ LFLRUHashTable<K, V, HashFunc>::LFLRUHashTable(unsigned long long inNumElements,
         links.right = LIST_END_MARK;
         if (links.left == (threadIdx + 1) * elementsPerThread - 1) abort();
         elementStorage[(threadIdx + 1) * elementsPerThread - 1].links.store(links, std::memory_order_seq_cst);
-        lruLists[threadIdx].expTimeMap = new std::multimap < uint32_t, K >();
+        lruLists[threadIdx].expTimeMap = new std::multimap < uint32_t, std::pair< unsigned long long, unsigned int > >();
     }
     elementLinks = (std::atomic_uint*) std::malloc(hashSize * sizeof(std::atomic_uint));
     memset(elementLinks, 255 /*1/4 HASH_FREE_MARK*/, hashSize * sizeof(std::atomic_uint));
@@ -708,9 +780,8 @@ bool LFLRUHashTable<K, V, HashFunc>::insertOrSet(unsigned long long threadIdx, c
         elementStorage[elementToInsert].links.store(freeListHeadLinks);
         lruLists[threadIdx].freeListHead = elementToInsert;
     }
-    addItemExpTime(threadIdx,inKey, expTime);
+    addItemExpTime(threadIdx, lockRangeStart, elementToInsert, expTime);
     return true;
-
 }
 
 template<typename K, typename V, class HashFunc>
@@ -846,7 +917,7 @@ bool LFLRUHashTable<K, V, HashFunc>::insert(unsigned long long threadIdx, const 
         elementStorage[elementToInsert].links.store(freeListHeadLinks);
         lruLists[threadIdx].freeListHead = elementToInsert;
     }
-    addItemExpTime(threadIdx,inKey, expTime);
+    addItemExpTime(threadIdx, lockRangeStart, elementToInsert, expTime);
     return true;
 }
 
@@ -865,7 +936,7 @@ bool LFLRUHashTable<K, V, HashFunc>::set(unsigned long long threadIdx, const K &
             ++(lruLists[threadIdx].moves);
             linkHead(threadIdx, locks[lockDepth]);
         }
-        addItemExpTime(threadIdx,inKey, expTime);
+        addItemExpTime(threadIdx, locksStart, locks[lockDepth], expTime);
         return true;
     }
     else
@@ -888,7 +959,7 @@ bool LFLRUHashTable<K, V, HashFunc>::set(unsigned long long threadIdx, const K &
                     ++(lruLists[threadIdx].moves);
                     linkHead(threadIdx, locks[lockDepth]);
                 }
-                addItemExpTime(threadIdx,inKey, expTime);
+                addItemExpTime(threadIdx, lockRangeStart, locks[lockDepth], expTime);
                 return true;
             }
             else
@@ -968,9 +1039,9 @@ void LFLRUHashTable<K, V, HashFunc>::processHash(unsigned long long threadIdx, s
 }
 
 template<typename K, typename V, class HashFunc>
-void LFLRUHashTable<K, V, HashFunc>::addItemExpTime(unsigned long long threadIdx, const K& inKey, uint32_t expTime)
+void LFLRUHashTable<K, V, HashFunc>::addItemExpTime(unsigned long long threadIdx, const unsigned long long& inPos, const unsigned int& inElementIdx, uint32_t expTime)
 {
-    lruLists[threadIdx].expTimeMap->emplace(expTime, inKey);
+    lruLists[threadIdx].expTimeMap->emplace(expTime, std::make_pair(inPos, inElementIdx));
 }
 
 template<typename K, typename V, class HashFunc>
@@ -983,9 +1054,21 @@ template<typename K, typename V, class HashFunc>
 void LFLRUHashTable<K, V, HashFunc>::removeExpiredItems(unsigned long long threadIdx, const uint32_t curTime)
 {
     auto itExpiredEnd = lruLists[threadIdx].expTimeMap->upper_bound(curTime);
-    for (auto itExpiredElement = lruLists[threadIdx].expTimeMap->begin(); itExpiredElement != itExpiredEnd; ++itExpiredElement)
+    if (itExpiredEnd != lruLists[threadIdx].expTimeMap->end()) 
     {
-        remove(threadIdx, itExpiredElement.second);
+        for (auto itExpiredElement = lruLists[threadIdx].expTimeMap->begin(); itExpiredElement != itExpiredEnd; ++itExpiredElement)
+        {
+            if (removeFromHashIdx(threadIdx, itExpiredElement.second.first, itExpiredElement.second.second)) 
+            {
+                unsigned int removedElement = itExpiredElement.second.second;
+                LRULinks newFreeListHeadLinks = elementStorage[removedElement].links.load();
+                newFreeListHeadLinks.left = LIST_END_MARK;
+                newFreeListHeadLinks.right = lruLists[threadIdx].freeListHead;
+                elementStorage[removedElement].links.store(newFreeListHeadLinks);
+                lruLists[threadIdx].freeListHead = removedElement;
+            }
+        }
+        lruLists[threadIdx].expTimeMap->erase(lruLists[threadIdx].expTimeMap->begin(), itExpiredEnd);
     }
 }
 
