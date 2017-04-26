@@ -1061,11 +1061,14 @@ void LFLRUHashTable<K, V, HashFunc>::removeExpiredItems(unsigned long long threa
             if (removeFromHashIdx(threadIdx, itExpiredElement.second.first, itExpiredElement.second.second)) 
             {
                 unsigned int removedElement = itExpiredElement.second.second;
-                LRULinks newFreeListHeadLinks = elementStorage[removedElement].links.load();
-                newFreeListHeadLinks.left = LIST_END_MARK;
-                newFreeListHeadLinks.right = lruLists[threadIdx].freeListHead;
-                elementStorage[removedElement].links.store(newFreeListHeadLinks);
-                lruLists[threadIdx].freeListHead = removedElement;
+                if (unlinkElement(removedElement)) 
+                {
+                    LRULinks newFreeListHeadLinks = elementStorage[removedElement].links.load();
+                    newFreeListHeadLinks.left = LIST_END_MARK;
+                    newFreeListHeadLinks.right = lruLists[threadIdx].freeListHead;
+                    elementStorage[removedElement].links.store(newFreeListHeadLinks);
+                    lruLists[threadIdx].freeListHead = removedElement;
+                }
             }
         }
         lruLists[threadIdx].expTimeMap->erase(lruLists[threadIdx].expTimeMap->begin(), itExpiredEnd);
